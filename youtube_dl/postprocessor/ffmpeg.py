@@ -77,7 +77,21 @@ class FFmpegPostProcessor(PostProcessor):
 
     def _determine_executables(self):
         programs = ['avprobe', 'avconv', 'ffmpeg', 'ffprobe']
-        prefer_ffmpeg = False
+        prefer_ffmpeg = True
+
+        def get_ffmpeg_version(path):
+            ver = get_exe_version(path, args=['-version'])
+            if ver:
+                regexs = [
+                    r'(?:\d+:)?([0-9.]+)-[0-9]+ubuntu[0-9.]+$',  # Ubuntu, see [1]
+                    r'n([0-9.]+)$',  # Arch Linux
+                    # 1. http://www.ducea.com/2006/06/17/ubuntu-package-version-naming-explanation/
+                ]
+                for regex in regexs:
+                    mobj = re.match(regex, ver)
+                    if mobj:
+                        ver = mobj.group(1)
+            return ver
 
         self.basename = None
         self.probe_basename = None
@@ -85,7 +99,7 @@ class FFmpegPostProcessor(PostProcessor):
         self._paths = None
         self._versions = None
         if self._downloader:
-            prefer_ffmpeg = self._downloader.params.get('prefer_ffmpeg', False)
+            prefer_ffmpeg = self._downloader.params.get('prefer_ffmpeg', True)
             location = self._downloader.params.get('ffmpeg_location')
             if location is not None:
                 if not os.path.exists(location):
@@ -110,26 +124,25 @@ class FFmpegPostProcessor(PostProcessor):
                 self._paths = dict(
                     (p, os.path.join(location, p)) for p in programs)
                 self._versions = dict(
-                    (p, get_exe_version(self._paths[p], args=['-version']))
-                    for p in programs)
+                    (p, get_ffmpeg_version(self._paths[p])) for p in programs)
         if self._versions is None:
             self._versions = dict(
-                (p, get_exe_version(p, args=['-version'])) for p in programs)
+                (p, get_ffmpeg_version(p)) for p in programs)
             self._paths = dict((p, p) for p in programs)
 
-        if prefer_ffmpeg:
-            prefs = ('ffmpeg', 'avconv')
-        else:
+        if prefer_ffmpeg is False:
             prefs = ('avconv', 'ffmpeg')
+        else:
+            prefs = ('ffmpeg', 'avconv')
         for p in prefs:
             if self._versions[p]:
                 self.basename = p
                 break
 
-        if prefer_ffmpeg:
-            prefs = ('ffprobe', 'avprobe')
-        else:
+        if prefer_ffmpeg is False:
             prefs = ('avprobe', 'ffprobe')
+        else:
+            prefs = ('ffprobe', 'avprobe')
         for p in prefs:
             if self._versions[p]:
                 self.probe_basename = p
@@ -384,9 +397,8 @@ class FFmpegEmbedSubtitlePP(FFmpegPostProcessor):
             opts += ['-c:s', 'mov_text']
         for (i, lang) in enumerate(sub_langs):
             opts.extend(['-map', '%d:0' % (i + 1)])
-            lang_code = ISO639Utils.short2long(lang)
-            if lang_code is not None:
-                opts.extend(['-metadata:s:s:%d' % i, 'language=%s' % lang_code])
+            lang_code = ISO639Utils.short2long(lang) or lang
+            opts.extend(['-metadata:s:s:%d' % i, 'language=%s' % lang_code])
 
         temp_filename = prepend_extension(filename, 'temp')
         self._downloader.to_screen('[ffmpeg] Embedding subtitles in \'%s\'' % filename)
